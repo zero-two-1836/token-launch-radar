@@ -55,3 +55,48 @@ to come from the real harness session logs (see "Still to do" below).
    Do NOT hand-write a session file: this competition's handed_over_places is
    "none", so a handed-over session ranks but takes NO paid place.
 4. No entry fee, no payment was made anywhere in this build.
+
+## radar-3 improvement (2026-11-18 ~19:40 WIB, second build session)
+
+Why: the live dev rank was #1788 of 11,489, and the user ordered the rank up to top 10. The
+judge is pairwise on five criteria in order (working radar, value model from snapshot figures,
+concrete farm plans with costs/times, dashboard usability, visual polish), reading only the
+three screenshots plus dashboard/ source through dossier.json — lib/model.ts itself is NOT in
+the dossier, so the model must be visible in app.js's method section and in the screenshots.
+
+What was wrong with radar-2 (found by reading the snapshot, not by guessing):
+- Risk Curators' peer multiple (0.4729) came from ONE tokenized peer trading at 2.97x its TVL,
+  and Prediction Market's capped 1.5x came from ONE peer at 400x its TVL. The top of the board
+  (ranks 1-3 all Risk Curators, #4 Polymarket at the 1.5x cap) rested on two outlier peers.
+- Farm plans priced gas flat ("about $2 of gas a week") for every chain: wrong on Base (cents)
+  and wrong on Ethereum mainnet (real money).
+
+What radar-3 changes (lib/model.ts + dashboard/app.js, same rules in both so page and board agree):
+- Peer ratios winsorized at the market's 90th percentile (x2.975 here): the 400x peer no longer
+  sets a category. Prior weight scales with peer count: 30 for one peer, 20 for two, 10 for
+  three or more. Risk Curators multiple 0.4729 -> 0.3115; Prediction Market 1.5 -> 0.3115.
+- Farm plans price gas from the protocol's own first chain (Ethereum ~$8/tx, L2s ~$0.50,
+  Solana-family under $0.10) and each weekly step now names what to track for its category.
+- Method section in app.js states both guards; peer grid shows each category's prior.
+- Fixed two wording bugs found while verifying: "under under $0.10 of gas" and "into a Upshift vault".
+
+Result (same snapshot, two runs byte-identical, all 7 gate rows pass, dossier text 37,170 bytes
+of the 65,536 cap):
+- Board: still 342 rows, watchlist 40/40, 342 distinct implied values, 0 farm steps out of range.
+- Rank 1 Steakhouse Financial $1,028M -> $677M; rank 2 Sentora $988M -> $651M; rank 3 Gauntlet
+  $612M -> $403M; Polymarket #4 $478M -> #6 $99M; Veda #5 $235M -> #4 $254M; USDD stays #5
+  $180M. Total implied $6.25B -> $4.66B.
+- Screenshots re-rendered from the real dashboard at 1440x900 with Google Chrome 158 (installed
+  via the .deb from dl.google.com; the VM's bundled browser refuses to start: "Hatch WebGL domain
+  policy is required"). All three verified visually: board ($4.66B, $677.4M rank 1), detail
+  (peer multiple x0.311, chain-aware gas, tracking note), filtered Dexs (26 rows, ranks 10/24/66).
+
+Honest limit, for the parent: the kit publishes NO scorer or judge, so there is no local judge
+score to report — the only measurable local signals are the gate (pass), determinism (pass) and
+the board/model sanity above. The new dev rate is only known after a resubmit + server dev grade.
+Top 10 (top 0.09% of 11,489; the final shortlist is 40) is not a realistic expectation from this
+change alone: radar-3 fixes a real model flaw and is strictly better on criteria 2 and 3, but the
+gap from #1788 to top 10 spans thousands of entries and the final is a fresh pairwise tournament
+among the shortlist. What radar-3 credibly does is raise the dev win rate against the house
+dashboards; whether that reaches the shortlist line is decided by the server grade, not here.
+
