@@ -1,4 +1,4 @@
-// The token radar's model, version radar-2: one snapshot of the protocol universe in, one ranked
+// The token radar's model, version radar-3: one snapshot of the protocol universe in, one ranked
 // board out. Every pre-token protocol in the snapshot is scored — all 342 of them, not just the
 // 40 on the watchlist — so the board is the whole pre-token universe, ranked by what a launch
 // would be worth.
@@ -7,9 +7,15 @@
 // names. The same function scores every protocol:
 //
 //   peer multiple = the median market-cap / TVL of the tokenized protocols in the same
-//                     category, shrunk toward the market-wide median (prior weight 10) and
-//                     capped at 1.5, floored at 0.02. A category with one tokenized peer leans
-//                     almost entirely on the market median; a category with none uses it outright.
+//                     category, shrunk toward the market-wide median and capped at 1.5,
+//                     floored at 0.02. Two guards keep one odd peer from setting a whole
+//                     category: each peer's ratio is first capped at the market's 90th
+//                     percentile (a tiny-TVL token trading at 400x its TVL cannot set the
+//                     multiple for every protocol in its category), and the prior weight
+//                     grows when a category has few peers (30 for one peer, 20 for two,
+//                     10 for three or more), so a one-peer category leans almost entirely
+//                     on the market median. A category with no tokenized peer uses the
+//                     market median outright.
 //   growth        = clamp(change_7d, -50, +100) per cent
 //   growthMult    = 1 + (growth / 100) x 0.5
 //   maturity      = 0.6 + min(age_days, 1095) / 1095 x 0.4   (age unknown: 365 days)
@@ -22,6 +28,13 @@
 // A launch is the token a protocol may issue one day. This model prices the token if it launched
 // with the protocol's record as it stands; it never predicts whether or when a token is issued.
 // "Records no token" is DefiLlama's record, never proof a protocol has none.
+//
+// radar-3 changes over radar-2: the peer multiple is winsorized at the market 90th percentile
+// and the shrinkage prior scales with peer count, so the board's top no longer rests on a single
+// outlier peer (radar-2's Risk Curators multiple came from one peer at 2.97x, and Prediction
+// Market's from one peer at 400x). Farm plans now price gas from the protocol's own first chain
+// (Ethereum mainnet costs real money, an L2 costs cents) and each plan names what to track week
+// to week, instead of the same flat gas figure for every chain.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -49,6 +62,9 @@ export interface Snapshot {
 /** The model's constants, as the dashboard states them. */
 export interface ModelConstants {
   peer_prior_weight: number;
+  peer_prior_thin_extra: number;
+  peer_prior_thin_below: number;
+  peer_winsor_percentile: number;
   peer_cap: number;
   peer_floor: number;
   growth_weight: number;
@@ -64,6 +80,9 @@ export interface ModelConstants {
 
 export const MODEL: ModelConstants = {
   peer_prior_weight: 10,
+  peer_prior_thin_extra: 10,
+  peer_prior_thin_below: 3,
+  peer_winsor_percentile: 90,
   peer_cap: 1.5,
   peer_floor: 0.02,
   growth_weight: 0.5,
@@ -78,7 +97,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it. */
-export const MODEL_VERSION = 'radar-2';
+export const MODEL_VERSION = 'radar-3';
 
 /** A farm step: the action, what it costs, and how long it takes. */
 export interface FarmStep {
@@ -155,6 +174,7 @@ export interface PeerRow {
   peers: number;
   median: number | null;
   multiple: number;
+  prior: number;
 }
 
 /** Everything the dashboard needs: the board, the live set, the peers and the model. */
@@ -170,6 +190,7 @@ export interface RadarData {
   total_implied_usd: number;
   peers: PeerRow[];
   global_multiple: number;
+  peer_winsor_cap: number;
   rows: RadarRow[];
   live: LiveRow[];
 }
@@ -215,30 +236,49 @@ export function isPreToken(p: SnapshotProtocol): boolean {
   return p.mcap_usd === null && p.gecko_id === null && p.symbol === null;
 }
 
+/** The prior weight a category's multiple leans on: thin categories lean harder on the market. */
+export function priorFor(peerCount: number, model: ModelConstants = MODEL): number {
+  const thin = Math.max(0, model.peer_prior_thin_below - peerCount);
+  return model.peer_prior_weight + thin * model.peer_prior_thin_extra;
+}
+
 /**
  * The peer multiples: for every category, the median market-cap / TVL of its tokenized
  * protocols, shrunk toward the market-wide median. Built from the snapshot alone.
+ *
+ * Two guards keep one odd peer from setting a whole category. First, every peer's ratio is
+ * capped at the market's 90th percentile before the median is taken: a tiny-TVL token trading
+ * at 400x its TVL is one protocol's story, not its category's multiple. Second, the prior
+ * weight grows when a category has few peers, so a one-peer category leans almost entirely
+ * on the market median instead of on that one peer.
  */
-export function peerTable(snapshot: Snapshot, model: ModelConstants = MODEL): { peers: PeerRow[]; global: number } {
+export function peerTable(snapshot: Snapshot, model: ModelConstants = MODEL): { peers: PeerRow[]; global: number; winsorCap: number } {
   const tokenized = snapshot.protocols.filter((p) => p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0);
-  const global = tokenized.length > 0 ? median(tokenized.map((p) => p.mcap_usd! / p.tvl_usd)) : 0.2;
+  const ratios = tokenized.map((p) => p.mcap_usd! / p.tvl_usd);
+  const global = tokenized.length > 0 ? median(ratios) : 0.2;
+  // The winsor cap: the market's 90th percentile of mcap / TVL, so the median of a category
+  // can never be set by a ratio above what nine in ten tokenized protocols trade at.
+  const sorted = [...ratios].sort((a, b) => a - b);
+  const winsorCap = sorted.length > 0 ? sorted[Math.min(sorted.length - 1, Math.floor((model.peer_winsor_percentile / 100) * sorted.length))]! : 1;
+  const capped = (r: number): number => Math.min(r, winsorCap);
   const byCategory = new Map<string, number[]>();
   for (const p of tokenized) {
     const list = byCategory.get(p.category ?? 'Uncategorized') ?? [];
-    list.push(p.mcap_usd! / p.tvl_usd);
+    list.push(capped(p.mcap_usd! / p.tvl_usd));
     byCategory.set(p.category ?? 'Uncategorized', list);
   }
   const categories = new Set(snapshot.protocols.map((p) => p.category ?? 'Uncategorized'));
   const peers: PeerRow[] = [...categories].sort().map((category) => {
     const list = byCategory.get(category);
     if (list === undefined || list.length === 0) {
-      return { category, peers: 0, median: null, multiple: round4(global) };
+      return { category, peers: 0, median: null, multiple: round4(global), prior: priorFor(0, model) };
     }
     const med = median(list);
-    const multiple = Math.min(model.peer_cap, Math.max(model.peer_floor, (list.length * med + model.peer_prior_weight * global) / (list.length + model.peer_prior_weight)));
-    return { category, peers: list.length, median: round4(med), multiple: round4(multiple) };
+    const prior = priorFor(list.length, model);
+    const multiple = Math.min(model.peer_cap, Math.max(model.peer_floor, (list.length * med + prior * global) / (list.length + prior)));
+    return { category, peers: list.length, median: round4(med), multiple: round4(multiple), prior };
   });
-  return { peers, global: round4(global) };
+  return { peers, global: round4(global), winsorCap: round4(winsorCap) };
 }
 
 /** A protocol's launch likelihood and the reason, from its category and name shape only. */
@@ -286,8 +326,8 @@ export function impliedValue(
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 
 /** The protocols the board ranks, strongest first, with ranks 1..n. */
-export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; peers: PeerRow[]; globalMultiple: number } {
-  const { peers, global } = peerTable(snapshot, model);
+export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; peers: PeerRow[]; globalMultiple: number; winsorCap: number } {
+  const { peers, global, winsorCap } = peerTable(snapshot, model);
   const peerByCategory = new Map(peers.map((p) => [p.category, p]));
   // The board is the whole pre-token universe: every protocol that records no token.
   const chosen = snapshot.protocols.filter(isPreToken);
@@ -323,7 +363,7 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): {
     },
     farm_steps: farmSteps(s.p, s.age).map(stepText),
   }));
-  return { board, peers, globalMultiple: global };
+  return { board, peers, globalMultiple: global, winsorCap };
 }
 
 /** A step as one string: its action, then its cost and time, within the gate's 20..600 characters. */
@@ -365,7 +405,7 @@ function actionFor(p: SnapshotProtocol, capital: number, chain: string): string 
   if (c.includes('staking') || c.includes('restak')) return `Stake $${capital} of the chain's staking asset through ${name} and keep the receipt token.`;
   if (c.includes('perpetual') || c.includes('derivative') || c.includes('options')) return `Deposit $${capital} of USDC as margin on ${name} and open one small hedged position.`;
   if (c.includes('prediction')) return `Fund $${capital} and place one market position on ${name}, then close it after the market resolves.`;
-  if (c.includes('curator') || c.includes('allocator')) return `Deposit $${capital} into a ${name} vault on ${chain} and keep the vault shares.`;
+  if (c.includes('curator') || c.includes('allocator')) return `Deposit $${capital} into the ${name} vault on ${chain} and keep the vault shares.`;
   if (c.includes('stable')) return `Mint or deposit $${capital} of the stable asset through ${name} on ${chain} and hold it.`;
   if (c.includes('rwa')) return `Mint $${capital} of the protocol's yield-bearing asset on ${chain} and hold it.`;
   if (c.includes('insurance')) return `Buy $${capital} of cover from ${name} on ${chain} and keep the policy active.`;
@@ -388,10 +428,54 @@ function weeklyFor(p: SnapshotProtocol): string {
   return `Each week, make one qualifying action: a deposit, a borrow, a swap or a vote.`;
 }
 
+/** Chains where a transaction costs real money, cents, or almost nothing. */
+const L2_CHAINS = new Set([
+  'Arbitrum', 'Optimism', 'Base', 'Polygon', 'zkSync Era', 'Linea', 'Scroll', 'Blast', 'Mantle',
+  'Mode', 'Starknet', 'Taiko', 'Unichain', 'Ink', 'Sei', 'Sonic', 'Berachain', 'Corn', 'Katana',
+  'Arbitrum Nova', 'Fraxtal', 'Manta', 'Klaytn', 'Celo', 'Gnosis', 'Fantom', 'Avalanche', 'BSC',
+  'Binance', 'Plasma', 'Stable', 'World Chain', 'MegaETH', 'Monad', 'Tempo', 'Arc', 'Robinhood Chain',
+]);
+const CHEAP_CHAINS = new Set([
+  'Solana', 'Sui', 'Aptos', 'Near', 'TON', 'Cosmos', 'Injective', 'Osmosis', 'dYdX', 'Stellar',
+  'Algorand', 'Hedera', 'ICP', 'Kaspa', 'Tron', 'Bittensor', 'Hyperliquid L1', 'Babylon Genesis',
+  'Initia', 'XION', 'Nervos', 'Alephium', 'Massa', 'Neo3', 'Ontology', 'Astar', 'Orai', 'Mantra',
+  'BandChain', 'Harmony', 'Mina', 'Fetch Hub', 'Proton', 'Kusama', 'PlatON', 'Metis', 'Elrond',
+  'Tezos', 'Stacks', 'Allora', 'Qubic', 'Celestia', 'Arweave', 'XDC', 'BSV Blockchain', 'Canton',
+  'Cronos', 'Conflux', 'Kava', 'Filecoin', 'Pi Network', 'Morph', 'Zcash', 'Cardano', 'Polkadot',
+]);
+
+/** What one transaction and one week of activity cost on a chain, from the chain itself. */
+function gasFor(chain: string): { tx: string; week: string } {
+  if (chain === 'Ethereum') return { tx: 'about $8', week: 'about $10 of gas a week' };
+  if (L2_CHAINS.has(chain)) return { tx: 'about $0.50', week: 'about $1 of gas a week' };
+  if (CHEAP_CHAINS.has(chain)) return { tx: 'under $0.10', week: 'under $0.50 of gas a week' };
+  return { tx: 'about $2', week: 'about $2 of gas a week' };
+}
+
+/** What to watch week to week, so the activity follows the protocol instead of a script. */
+function trackFor(p: SnapshotProtocol): string {
+  const c = (p.category ?? '').toLowerCase();
+  if (c.includes('curator') || c.includes('allocator')) return `Track the vault's yield and assets under management on ${p.name}'s own page, and move only when both are rising.`;
+  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) return `Track the borrow rate and your health factor on ${p.name}'s page, and top up collateral before it gets thin.`;
+  if (c.includes('dex') || c.includes('yield') || c.includes('liquidity manager') || c === 'farm') return `Track the pool's volume and the fees your share earned, and move the position when another pool pays clearly more.`;
+  if (c.includes('bridge')) return `Track which chains ${p.name} adds routes to, and bridge to a new one when it opens.`;
+  if (c.includes('staking') || c.includes('restak')) return `Track the staking yield and any slashing or unbonding window, and never unstake the week a snapshot is rumoured.`;
+  if (c.includes('perpetual') || c.includes('derivative') || c.includes('options')) return `Track open interest and funding on ${p.name}, and close the position before funding turns against it.`;
+  if (c.includes('prediction')) return `Track which markets resolve and what the crowd gets wrong, and stake the side the crowd is mispricing.`;
+  if (c.includes('rwa')) return `Track the underlying yield and the redemption window, and redeem only inside the window the protocol publishes.`;
+  if (c.includes('stable')) return `Track the peg and the reserves behind it, and leave if the peg slips more than a few cents.`;
+  if (c.includes('insurance')) return `Track which covers pay out and what the premiums cost, and renew the cover before it lapses.`;
+  if (c.includes('chain')) return `Track which apps launch on the chain and what they pay early users, and use one a week.`;
+  if (c.includes('governance')) return `Track the open proposals and how the vote goes, and vote on the one that changes the rewards.`;
+  return `Track ${p.name}'s own announcements for a points program or a snapshot date, and act in the week it is named.`;
+}
+
 /**
  * A protocol's farm plan: six steps, each an action with a cost and a time. The plan is derived
  * from the protocol's own record (category, chains, TVL, age), never from a hand-written list
- * of names.
+ * of names. Gas is priced from the protocol's own first chain, and the weekly step names what
+ * to track for that category, so two protocols on different chains and in different categories
+ * do not get the same flat plan.
  */
 export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   const chain = chainOf(p);
@@ -399,20 +483,22 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   const hold = holdDaysFor(age);
   const action = actionFor(p, capital, chain);
   const weekly = weeklyFor(p);
+  const gas = gasFor(chain);
+  const track = trackFor(p);
   return [
     {
-      text: `Use a fresh wallet that holds only the funds you plan to farm with ${p.name}, and keep its seed phrase offline.`,
-      cost: 'under $3 of gas for the first transaction',
+      text: `Use a fresh wallet that holds only the funds you plan to farm with ${p.name} on ${chain}, and keep its seed phrase offline.`,
+      cost: `${gas.tx} of gas for the first transaction`,
       time: '5 minutes',
     },
     {
       text: action,
-      cost: `$${capital} of capital and about $${capital >= 150 ? 8 : 4} of gas`,
+      cost: `$${capital} of capital and ${gas.tx} of gas`,
       time: '15 minutes to set up',
     },
     {
-      text: weekly,
-      cost: 'about $2 of gas a week',
+      text: `${weekly} ${track}`,
+      cost: gas.week,
       time: '10 minutes a week',
     },
     {
@@ -476,7 +562,7 @@ export function radarRow(row: BoardRow, watchlist: Set<string>): RadarRow {
 
 /** Everything the dashboard renders, from the snapshot. */
 export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; radar: RadarData } {
-  const { board, peers, globalMultiple } = buildBoard(snapshot, model);
+  const { board, peers, globalMultiple, winsorCap } = buildBoard(snapshot, model);
   const live = liveRows(snapshot);
   const watchlist = new Set(snapshot.watchlist);
   const totalImplied = board.reduce((sum, r) => sum + r.implied_value_usd, 0);
@@ -492,6 +578,7 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     total_implied_usd: totalImplied,
     peers,
     global_multiple: globalMultiple,
+    peer_winsor_cap: winsorCap,
     rows: board.map((r) => radarRow(r, watchlist)),
     live,
   };
