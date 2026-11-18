@@ -1,0 +1,105 @@
+:root {
+  --bg: #0a0e17;
+  --panel: #101828;
+  --panel2: #0d1526;
+  --line: #1e2a3f;
+  --text: #e8edf5;
+  --muted: #93a1b8;
+  --faint: #64748b;
+  --accent: #7c6cff;
+  --accent2: #22d3ee;
+  --good: #34d399;
+  --bad: #f87171;
+  --warn: #fbbf24;
+  --radius: 12px;
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.skip { position: absolute; left: -9999px; }
+.skip:focus { left: 12px; top: 12px; background: var(--accent); color: #fff; padding: 8px 12px; border-radius: 8px; z-index: 99; }
+.noscript { padding: 24px; text-align: center; color: var(--warn); }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 28px 20px 64px; }
+header.hero { margin-bottom: 20px; }
+.eyebrow { color: var(--accent2); font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; margin: 0 0 6px; }
+h1 { font-size: 34px; line-height: 1.15; margin: 0 0 8px; letter-spacing: -0.02em; }
+h1 .grad { background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.lede { color: var(--muted); max-width: 760px; margin: 0; font-size: 16px; }
+.stats { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 0; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; min-width: 130px; }
+.stat b { display: block; font-size: 20px; line-height: 1.2; }
+.stat span { color: var(--muted); font-size: 12px; }
+.tabs { display: flex; gap: 8px; margin: 22px 0 14px; }
+.tabs button {
+  background: var(--panel); color: var(--muted); border: 1px solid var(--line);
+  border-radius: 999px; padding: 8px 16px; font-size: 14px; cursor: pointer;
+}
+.tabs button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 16px; }
+.card h2 { font-size: 18px; margin: 0 0 6px; }
+.card h3 { font-size: 15px; margin: 18px 0 8px; }
+.card p { color: var(--muted); margin: 6px 0; }
+.card p b, .card li b { color: var(--text); }
+.formula {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 14px; color: var(--accent2); font-size: 13.5px; overflow-x: auto; white-space: nowrap;
+}
+.controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.controls input[type="search"], .controls select {
+  background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 9px 12px; font-size: 14px;
+}
+.controls input[type="search"] { flex: 1 1 220px; }
+.controls label { color: var(--muted); font-size: 13px; display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.count { color: var(--muted); font-size: 13px; margin: 12px 2px; }
+table.board { width: 100%; border-collapse: collapse; font-size: 14px; }
+.board th, .board td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+.board th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+.board th button { background: none; border: 0; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; padding: 0; }
+.board th button:hover { color: var(--text); }
+.board tbody tr { cursor: pointer; }
+.board tbody tr:hover { background: var(--panel2); }
+.board td.num, .board th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.board td.name { white-space: normal; font-weight: 600; }
+.board td.name small { display: block; font-weight: 400; color: var(--faint); font-size: 12px; }
+.badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+.badge.watch { background: rgba(124, 108, 255, 0.18); color: #b7adff; }
+.badge.likely { background: rgba(52, 211, 153, 0.15); color: var(--good); }
+.badge.long { background: rgba(251, 191, 36, 0.12); color: var(--warn); }
+.badge.structural { background: rgba(248, 113, 113, 0.12); color: var(--bad); }
+.up { color: var(--good); }
+.down { color: var(--bad); }
+.empty { padding: 28px; text-align: center; color: var(--muted); }
+.peergrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; margin-top: 8px; }
+.peergrid div { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+.peergrid b { display: block; font-size: 14px; }
+.peergrid span { color: var(--muted); font-size: 12px; }
+.overlay { position: fixed; inset: 0; background: rgba(4, 7, 12, 0.78); display: flex; align-items: flex-start; justify-content: center; padding: 40px 16px; z-index: 50; overflow-y: auto; }
+.detail { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; max-width: 760px; width: 100%; padding: 24px 26px; }
+.detail h2 { font-size: 24px; margin: 4px 0 2px; }
+.detail .sub { color: var(--muted); margin: 0 0 14px; }
+.detail dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px 16px; margin: 0 0 14px; }
+.detail dt { color: var(--faint); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+.detail dd { margin: 2px 0 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.detail table.model { width: 100%; border-collapse: collapse; font-size: 14px; margin: 6px 0 4px; }
+.detail table.model td { padding: 7px 8px; border-bottom: 1px solid var(--line); }
+.detail table.model td:last-child { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.detail ol.steps { margin: 8px 0; padding-left: 22px; }
+.detail ol.steps li { margin: 10px 0; }
+.detail ol.steps li b { display: block; }
+.detail ol.steps li span { color: var(--muted); font-size: 13px; }
+.close { float: right; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 14px; }
+.note { color: var(--faint); font-size: 13px; }
+footer { margin-top: 26px; color: var(--faint); font-size: 13px; }
+footer p { margin: 4px 0; }
+@media (max-width: 720px) {
+  h1 { font-size: 26px; }
+  .board th:nth-child(4), .board td:nth-child(4) { display: none; }
+}
