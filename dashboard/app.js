@@ -64,7 +64,7 @@
     if (c.indexOf('staking') >= 0 || c.indexOf('restak') >= 0) return 'Stake $' + capital + " of the chain's staking asset through " + name + ' and keep the receipt token.';
     if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0 || c.indexOf('options') >= 0) return 'Deposit $' + capital + ' of USDC as margin on ' + name + ' and open one small hedged position.';
     if (c.indexOf('prediction') >= 0) return 'Fund $' + capital + ' and place one market position on ' + name + ', then close it after the market resolves.';
-    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return 'Deposit $' + capital + ' into a ' + name + ' vault on ' + chain + ' and keep the vault shares.';
+    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return 'Deposit $' + capital + ' into the ' + name + ' vault on ' + chain + ' and keep the vault shares.';
     if (c.indexOf('stable') >= 0) return 'Mint or deposit $' + capital + ' of the stable asset through ' + name + ' on ' + chain + ' and hold it.';
     if (c.indexOf('rwa') >= 0) return 'Mint $' + capital + " of the protocol's yield-bearing asset on " + chain + ' and hold it.';
     if (c.indexOf('insurance') >= 0) return 'Buy $' + capital + ' of cover from ' + name + ' on ' + chain + ' and keep the policy active.';
@@ -84,6 +84,30 @@
     if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return "Each week, check the vault's yield and add a little capital when it is positive.";
     return 'Each week, make one qualifying action: a deposit, a borrow, a swap or a vote.';
   }
+  var L2_CHAINS = ['Arbitrum', 'Optimism', 'Base', 'Polygon', 'zkSync Era', 'Linea', 'Scroll', 'Blast', 'Mantle', 'Mode', 'Starknet', 'Taiko', 'Unichain', 'Ink', 'Sei', 'Sonic', 'Berachain', 'Corn', 'Katana', 'Arbitrum Nova', 'Fraxtal', 'Manta', 'Klaytn', 'Celo', 'Gnosis', 'Fantom', 'Avalanche', 'BSC', 'Binance', 'Plasma', 'Stable', 'World Chain', 'MegaETH', 'Monad', 'Tempo', 'Arc', 'Robinhood Chain'];
+  var CHEAP_CHAINS = ['Solana', 'Sui', 'Aptos', 'Near', 'TON', 'Cosmos', 'Injective', 'Osmosis', 'dYdX', 'Stellar', 'Algorand', 'Hedera', 'ICP', 'Kaspa', 'Tron', 'Bittensor', 'Hyperliquid L1', 'Babylon Genesis', 'Initia', 'XION', 'Nervos', 'Alephium', 'Massa', 'Neo3', 'Ontology', 'Astar', 'Orai', 'Mantra', 'BandChain', 'Harmony', 'Mina', 'Fetch Hub', 'Proton', 'Kusama', 'PlatON', 'Metis', 'Elrond', 'Tezos', 'Stacks', 'Allora', 'Qubic', 'Celestia', 'Arweave', 'XDC', 'BSV Blockchain', 'Canton', 'Cronos', 'Conflux', 'Kava', 'Filecoin', 'Pi Network', 'Morph', 'Zcash', 'Cardano', 'Polkadot'];
+  function gasFor(chain) {
+    if (chain === 'Ethereum') return { tx: 'about $8', week: 'about $10 of gas a week' };
+    if (L2_CHAINS.indexOf(chain) >= 0) return { tx: 'about $0.50', week: 'about $1 of gas a week' };
+    if (CHEAP_CHAINS.indexOf(chain) >= 0) return { tx: 'under $0.10', week: 'under $0.50 of gas a week' };
+    return { tx: 'about $2', week: 'about $2 of gas a week' };
+  }
+  function trackFor(p) {
+    var c = (p.category || '').toLowerCase();
+    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return "Track the vault's yield and assets under management on " + p.name + "'s own page, and move only when both are rising.";
+    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return "Track the borrow rate and your health factor on " + p.name + "'s page, and top up collateral before it gets thin.";
+    if (c.indexOf('dex') >= 0 || c.indexOf('yield') >= 0 || c.indexOf('liquidity manager') >= 0 || c === 'farm') return "Track the pool's volume and the fees your share earned, and move the position when another pool pays clearly more.";
+    if (c.indexOf('bridge') >= 0) return 'Track which chains ' + p.name + ' adds routes to, and bridge to a new one when it opens.';
+    if (c.indexOf('staking') >= 0 || c.indexOf('restak') >= 0) return 'Track the staking yield and any slashing or unbonding window, and never unstake the week a snapshot is rumoured.';
+    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0 || c.indexOf('options') >= 0) return 'Track open interest and funding on ' + p.name + ', and close the position before funding turns against it.';
+    if (c.indexOf('prediction') >= 0) return 'Track which markets resolve and what the crowd gets wrong, and stake the side the crowd is mispricing.';
+    if (c.indexOf('rwa') >= 0) return 'Track the underlying yield and the redemption window, and redeem only inside the window the protocol publishes.';
+    if (c.indexOf('stable') >= 0) return 'Track the peg and the reserves behind it, and leave if the peg slips more than a few cents.';
+    if (c.indexOf('insurance') >= 0) return 'Track which covers pay out and what the premiums cost, and renew the cover before it lapses.';
+    if (c.indexOf('chain') >= 0) return 'Track which apps launch on the chain and what they pay early users, and use one a week.';
+    if (c.indexOf('governance') >= 0) return 'Track the open proposals and how the vote goes, and vote on the one that changes the rewards.';
+    return "Track " + p.name + "'s own announcements for a points program or a snapshot date, and act in the week it is named.";
+  }
   function stepText(step) {
     var s = step.text + ' Cost: ' + step.cost + '. Time: ' + step.time + '.';
     if (s.length > 600) s = s.slice(0, 596) + '...';
@@ -94,10 +118,11 @@
     var chain = chainOf(p);
     var capital = capitalFor(p);
     var hold = holdDaysFor(p.age_days);
+    var gas = gasFor(chain);
     return [
-      { text: 'Use a fresh wallet that holds only the funds you plan to farm with ' + p.name + ', and keep its seed phrase offline.', cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
-      { text: actionFor(p, capital, chain), cost: '$' + capital + ' of capital and about $' + (capital >= 150 ? 8 : 4) + ' of gas', time: '15 minutes to set up' },
-      { text: weeklyFor(p), cost: 'about $2 of gas a week', time: '10 minutes a week' },
+      { text: 'Use a fresh wallet that holds only the funds you plan to farm with ' + p.name + ' on ' + chain + ', and keep its seed phrase offline.', cost: gas.tx + ' of gas for the first transaction', time: '5 minutes' },
+      { text: actionFor(p, capital, chain), cost: '$' + capital + ' of capital and ' + gas.tx + ' of gas', time: '15 minutes to set up' },
+      { text: weeklyFor(p) + ' ' + trackFor(p), cost: gas.week, time: '10 minutes a week' },
       { text: 'Hold the position for at least ' + hold + ' days so the activity is counted in more than one snapshot.', cost: 'the $' + capital + ' stays in the position', time: hold + ' days' },
       { text: "Before you withdraw, open " + p.name + "'s own points or rewards page and claim only from the link it publishes.", cost: 'no fee to check, and never pay to claim', time: '10 minutes' },
       { text: 'Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.', cost: 'nothing but the log', time: '5 minutes' }
@@ -298,7 +323,7 @@
     var grid = el('div', { class: 'peergrid' }, peers.map(function (p) {
       return el('div', null, [
         el('b', { text: p.category }),
-        el('span', { text: p.peers + ' peer' + (p.peers === 1 ? '' : 's') + ' · median ×' + (p.median === null ? '—' : p.median.toFixed(3)) + ' → multiple ×' + p.multiple.toFixed(3) })
+        el('span', { text: p.peers + ' peer' + (p.peers === 1 ? '' : 's') + ' · median ×' + (p.median === null ? '—' : p.median.toFixed(3)) + ' · prior ' + p.prior + ' → multiple ×' + p.multiple.toFixed(3) })
       ]);
     }));
     return el('div', null, [
@@ -307,7 +332,7 @@
         el('p', null, [el('b', { text: 'Implied value = TVL × peer multiple × growth × maturity × launch likelihood.' }), el('span', { text: ' Every factor comes from the snapshot’s own figures. No protocol name is special-cased anywhere in the program: the same function scores all 342 pre-token protocols.' })]),
         el('div', { class: 'formula', text: 'implied = round(TVL × peerMultiple × (1 + clamp(7d, −50, +100) / 100 × 0.5) × (0.6 + min(age, 1095) / 1095 × 0.4) × likelihood)' }),
         el('h3', { text: 'Peer multiple' }),
-        el('p', { text: 'For each category, the median market-cap / TVL of its tokenized protocols, shrunk toward the market-wide median (×' + DATA.global_multiple.toFixed(3) + ') with prior weight ' + MODEL.peer_prior_weight + ', capped at ×' + MODEL.peer_cap + ' and floored at ×' + MODEL.peer_floor + '. A category with one tokenized peer leans almost entirely on the market; a category with none uses the market median outright.' }),
+        el('p', { text: 'For each category, the median market-cap / TVL of its tokenized protocols, shrunk toward the market-wide median (×' + DATA.global_multiple.toFixed(3) + ') with prior weight ' + MODEL.peer_prior_weight + ', capped at ×' + MODEL.peer_cap + ' and floored at ×' + MODEL.peer_floor + '. Two guards keep one odd peer from setting a whole category: every peer ratio is first capped at the market’s 90th percentile (×' + (DATA.peer_winsor_cap || 0).toFixed(3) + '), so a tiny-TVL token trading at 400× its TVL cannot set its category’s multiple; and the prior weight grows when a category has few peers — 30 for one peer, 20 for two, 10 for three or more — so a one-peer category leans almost entirely on the market. A category with none uses the market median outright.' }),
         grid,
         el('h3', { text: 'Launch likelihood' }),
         el('p', { text: 'Core protocols price at 100%. An exchange, a bridge or a wrapped / staked product prices at 1%: its value is the underlying asset, not a new token. A staking pool prices at 10%. A versioned name — a pool of another protocol — halves the weight again. The category decides, never the name.' }),
