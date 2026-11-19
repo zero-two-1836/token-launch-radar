@@ -264,10 +264,20 @@
       ['Peer multiple (' + (m.peer_count > 0 ? m.peer_count + ' tokenized peer' + (m.peer_count === 1 ? '' : 's') + ' in ' + (m.category || 'this category') : 'no tokenized peer in this category, market median') + ')', '×' + m.peer_multiple.toFixed(3)],
       ['7-day growth', fmtPct(m.change_7d) + ' → ×' + m.growth_multiplier.toFixed(3)],
       ['Maturity (' + fmtAge(m.age_days) + ' tracked, no token)', '×' + m.maturity_multiplier.toFixed(3)],
+      ['Chain breadth (' + m.chain_count + ' live chain' + (m.chain_count === 1 ? '' : 's') + ')', '×' + m.chain_multiplier.toFixed(3)],
+      ['Category momentum (' + (m.category || 'this category') + ' ' + fmtPct(m.category_growth_pct) + ' TVL-weighted 7d)', '×' + m.momentum_multiplier.toFixed(3)],
       ['Launch likelihood', Math.round(m.likelihood * 100) + '%'],
       ['Implied value', fmtUsd(m.implied_value_usd)]
     ];
     var modelRows = rows.map(function (kv) {
+      return el('tr', null, [el('td', { text: kv[0] }), el('td', { text: kv[1] })]);
+    });
+    var costRows = [
+      ['Capital in the position', '$' + m.farm_capital_usd],
+      ['Gas over the hold period', '$' + m.farm_gas_total_usd],
+      ['Total cost to farm', '$' + m.farm_total_cost_usd],
+      ['Implied value per $1 farmed', '$' + m.farm_value_per_dollar.toLocaleString('en-US')]
+    ].map(function (kv) {
       return el('tr', null, [el('td', { text: kv[0] }), el('td', { text: kv[1] })]);
     });
     return el('div', {
@@ -286,7 +296,10 @@
       ]),
       el('h3', { text: 'How the value is built' }),
       el('table', { class: 'model' }, modelRows),
-      el('p', { class: 'note', text: 'Implied value = TVL × peer multiple × growth × maturity × launch likelihood. Multipliers are shown rounded; the board carries the program’s exact product. ' + r.likelihood_reason }),
+      el('p', { class: 'note', text: 'Implied value = TVL × peer multiple × growth × maturity × chain breadth × category momentum × launch likelihood. Multipliers are shown rounded; the board carries the program’s exact product. ' + r.likelihood_reason }),
+      el('h3', { text: 'What the farm costs' }),
+      el('table', { class: 'model' }, costRows),
+      el('p', { class: 'note', text: 'Total cost is the capital plus every dollar of gas over the hold period, priced from this protocol’s own first chain. Implied value per $1 farmed compares farms with each other — a cheap farm on an L2 against a dear one on Ethereum — it is not a payout: the launch value is shared across every farmer.' }),
       el('h3', { text: 'How to farm it' }),
       el('ol', { class: 'steps' }, steps.map(function (s) {
         var cut = s.indexOf(' Cost: ');
@@ -323,25 +336,29 @@
     var grid = el('div', { class: 'peergrid' }, peers.map(function (p) {
       return el('div', null, [
         el('b', { text: p.category }),
-        el('span', { text: p.peers + ' peer' + (p.peers === 1 ? '' : 's') + ' · median ×' + (p.median === null ? '—' : p.median.toFixed(3)) + ' · prior ' + p.prior + ' → multiple ×' + p.multiple.toFixed(3) })
+        el('span', { text: p.peers + ' peer' + (p.peers === 1 ? '' : 's') + ' · median ×' + (p.median === null ? '—' : p.median.toFixed(3)) + ' · prior ' + p.prior + ' → multiple ×' + p.multiple.toFixed(3) + ' · sector ' + (p.growth_pct > 0 ? '+' : '') + p.growth_pct.toFixed(1) + '% 7d' })
       ]);
     }));
     return el('div', null, [
       el('div', { class: 'card' }, [
         el('h2', { text: 'The model: peer multiples, not a name list' }),
-        el('p', null, [el('b', { text: 'Implied value = TVL × peer multiple × growth × maturity × launch likelihood.' }), el('span', { text: ' Every factor comes from the snapshot’s own figures. No protocol name is special-cased anywhere in the program: the same function scores all 342 pre-token protocols.' })]),
-        el('div', { class: 'formula', text: 'implied = round(TVL × peerMultiple × (1 + clamp(7d, −50, +100) / 100 × 0.5) × (0.6 + min(age, 1095) / 1095 × 0.4) × likelihood)' }),
+        el('p', null, [el('b', { text: 'Implied value = TVL × peer multiple × growth × maturity × chain breadth × category momentum × launch likelihood.' }), el('span', { text: ' Every factor comes from the snapshot’s own figures. No protocol name is special-cased anywhere in the program: the same function scores all 342 pre-token protocols, and it uses every figure the snapshot carries.' })]),
+        el('div', { class: 'formula', text: 'implied = round(TVL × peerMultiple × (1 + clamp(7d, −50, +100) / 100 × 0.5) × (0.6 + min(age, 1095) / 1095 × 0.4) × (1 + min(chains − 1, 10) × 0.01) × (1 + clamp(sector7d, −20, +50) / 100 × 0.25) × likelihood)' }),
         el('h3', { text: 'Peer multiple' }),
         el('p', { text: 'For each category, the median market-cap / TVL of its tokenized protocols, shrunk toward the market-wide median (×' + DATA.global_multiple.toFixed(3) + ') with prior weight ' + MODEL.peer_prior_weight + ', capped at ×' + MODEL.peer_cap + ' and floored at ×' + MODEL.peer_floor + '. Two guards keep one odd peer from setting a whole category: every peer ratio is first capped at the market’s 90th percentile (×' + (DATA.peer_winsor_cap || 0).toFixed(3) + '), so a tiny-TVL token trading at 400× its TVL cannot set its category’s multiple; and the prior weight grows when a category has few peers — 30 for one peer, 20 for two, 10 for three or more — so a one-peer category leans almost entirely on the market. A category with none uses the market median outright.' }),
         grid,
+        el('h3', { text: 'Chain breadth and sector momentum' }),
+        el('p', { text: 'Two factors use the snapshot’s remaining figures. Chain breadth: a protocol live on more chains reaches more users to reward, so each extra chain up to ten adds 1% — a protocol on eleven chains or more scores ×1.10, a single-chain one ×1.00. Sector momentum: each category’s TVL-weighted seven-day change, so a protocol in a sector whose money is growing fast is worth up to 12.5% more and one in a shrinking sector up to 5% less. Both are the snapshot’s own numbers, never a hand-kept list.' }),
         el('h3', { text: 'Launch likelihood' }),
         el('p', { text: 'Core protocols price at 100%. An exchange, a bridge or a wrapped / staked product prices at 1%: its value is the underlying asset, not a new token. A staking pool prices at 10%. A versioned name — a pool of another protocol — halves the weight again. The category decides, never the name.' }),
         el('h3', { text: 'Growth and maturity' }),
-        el('p', { text: 'Seven-day TVL growth moves the value by half its size, clamped to −50% … +100%. Age tracked with no token adds up to 40%: a protocol that has run for years without issuing anything is the one whose launch would be worth the most.' })
+        el('p', { text: 'Seven-day TVL growth moves the value by half its size, clamped to −50% … +100%. Age tracked with no token adds up to 40%: a protocol that has run for years without issuing anything is the one whose launch would be worth the most.' }),
+        el('h3', { text: 'What a farm costs' }),
+        el('p', { text: 'Every protocol’s detail view totals its farm cost: the capital plus every dollar of gas over the hold period, priced from its own first chain — about $8 a transaction on Ethereum mainnet, about $0.50 on an L2, under $0.10 on the cheap chains — and divides the implied value by that total. The figure compares farms with each other; it is not a payout.' })
       ]),
       el('div', { class: 'card' }, [
         el('h2', { text: 'How to read the board' }),
-        el('p', { text: 'Rank 1 is the most valuable launch on the snapshot’s figures. Click any row for its model breakdown and its six-step farm plan, with what each step costs and how long it takes. Use the filters to narrow by category, chain or watchlist, and sort by implied value, TVL, growth or age.' }),
+        el('p', { text: 'Rank 1 is the most valuable launch on the snapshot’s figures. Click any row for its model breakdown, its total farm cost and its six-step farm plan, with what each step costs and how long it takes. Use the filters to narrow by category, chain or watchlist, and sort by implied value, TVL, growth or age.' }),
         el('p', { text: '“Records no token” is DefiLlama’s record, never proof a protocol has none. The implied value is this entry’s own claim, never make.fun’s, and a farm plan is a set of steps, not a promise of an airdrop.' })
       ])
     ]);
@@ -356,7 +373,7 @@
     wrap.appendChild(el('header', { class: 'hero' }, [
       el('p', { class: 'eyebrow', text: 'Token launch radar · snapshot ' + DATA.as_of }),
       el('h1', null, [el('span', { text: 'Every pre-token protocol, ' }), el('span', { class: 'grad', text: 'ranked by what its launch would be worth.' })]),
-      el('p', { class: 'lede', text: '342 protocols that record no token, scored by a peer-multiple model built from the snapshot itself — TVL, seven-day growth, age tracked with no token, and whether a launch is structurally possible. Click any row for its model breakdown and farm plan.' }),
+      el('p', { class: 'lede', text: '342 protocols that record no token, scored by a peer-multiple model built from the snapshot itself — TVL, seven-day growth, age tracked with no token, how many chains each one is live on, how hot its sector is, and whether a launch is structurally possible. Click any row for its model breakdown, its total farm cost and its farm plan.' }),
       el('div', { class: 'stats' }, [
         el('div', { class: 'stat' }, [el('b', { text: String(DATA.board_size) }), el('span', { text: 'pre-token protocols ranked' })]),
         el('div', { class: 'stat' }, [el('b', { text: String(DATA.watchlist_size) }), el('span', { text: 'on the watchlist, all covered' })]),
