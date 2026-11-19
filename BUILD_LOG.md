@@ -100,3 +100,51 @@ gap from #1788 to top 10 spans thousands of entries and the final is a fresh pai
 among the shortlist. What radar-3 credibly does is raise the dev win rate against the house
 dashboards; whether that reaches the shortlist line is decided by the server grade, not here.
 
+## radar-4 improvement (2026-11-19, third build session)
+
+Why: the live rank was #5122 of 12,953 (judge 882,790; rank 1 is 965,989), and the user ordered
+the rank up to top 10, never below 500. The judge is pairwise on five criteria in order (working
+radar, value model from snapshot figures, concrete farm plans with costs/times, dashboard
+usability, visual polish), reading only the three screenshots plus dashboard/ source through
+dossier.json — lib/model.ts itself is NOT in the dossier, so the model must be visible in
+app.js's method section, the detail view and the screenshots.
+
+What radar-4 changes (lib/model.ts + dashboard/app.js + app.css, same rules in both so page and
+board agree):
+- The model now uses EVERY figure the snapshot carries. Chain breadth: each extra live chain up
+  to ten adds 1% (x1.00 single-chain to x1.10 for eleven or more chains) — the chains array was
+  the last snapshot field the model had not used. Category momentum: each category's TVL-weighted
+  seven-day change, clamped to -20%…+50% and weighted 0.25, so a protocol in a hot sector is worth
+  up to 12.5% more and one in a cold sector up to 5% less. Both are the snapshot's own numbers.
+- Farm plans now total their cost: capital plus every dollar of gas over the hold period (first
+  transaction, then one week of activity per week held), priced from the protocol's own first
+  chain, and the implied value per dollar of that total, so a cheap farm on an L2 can be compared
+  with a dear one on Ethereum mainnet. The detail view shows the cost table; the method section
+  explains it. The value-per-dollar is labelled as a comparison figure, not a payout.
+- The detail screenshot is now 1440x1400 so the whole detail view shows: the 8-row model
+  breakdown, the farm-cost table, and all six farm steps. The dialog spacing was tightened and
+  the overlay padding reduced so the content fits. Board and filtered screenshots re-rendered
+  from the new dashboard at 1440x900 with Google Chrome 158 (installed via the .deb; the VM's
+  bundled browser refuses to start: "Hatch WebGL domain policy is required").
+
+Result (same snapshot, two runs byte-identical, all 7 gate rows pass, dossier text 39,671 bytes
+of the 65,536 cap, dossier 895,241 bytes of the 1.5 MiB cap):
+- Board: still 342 rows, watchlist 40/40, 342 distinct implied values, 0 farm steps out of range.
+- Rank 1 Steakhouse Financial $677M -> $745M (11 chains, x1.10); rank 2 Sentora $651M -> $670M;
+  rank 3 Gauntlet $403M -> $444M; Veda $254M -> $277M; USDD $180M -> $180M; Upshift #8 -> #6
+  $99.5M; Polymarket #6 -> #7 $98.8M; RockawayX #11 -> #10 $67.1M; Bittensor dTAO #10 -> #11.
+  Total implied $4.66B -> $4.86B. Top-10 overlap with radar-3 is 9/10; rank moves are +/-2.
+- Farm costs now visible: Steakhouse $155.50 total ($150 capital + $5.50 gas on Base) at
+  $4,789,772.14 implied per $1 farmed; Sentora $208.00 (Ethereum first chain: $8 + $10/week).
+- Screenshots re-rendered from the real dashboard and verified visually: board ($4.86B, $744.8M
+  rank 1), detail (8-row breakdown incl. chain x1.100 and momentum x1.000, cost table, all 6
+  farm steps), filtered Dexs (26 rows, ranks 11/26/67).
+
+Honest limit, for the parent: as with radar-3, there is no local judge score — the only
+measurable local signals are the gate, determinism and the board/model sanity above. The two new
+factors are deliberately modest (chain at most +10%, momentum at most +12.5% / -5%) so the board
+does not reshuffle on a weak signal; what they credibly do is make the value model use every
+snapshot figure (criterion 2) and make farm costs concrete and comparable (criterion 3), with
+the full detail view now visible in the screenshot the judge reads first. Whether that lifts
+the dev rate from #5122 toward the shortlist line is decided by the server grade, not here.
+
