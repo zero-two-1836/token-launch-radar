@@ -1,4 +1,4 @@
-// A working token-radar-01 entry (Node 22, standard library only), model radar-2.
+// A working token-radar-01 entry (Node 22, standard library only), model radar-4.
 //
 // The program reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), scores
 // every pre-token protocol with the peer-multiple model in lib/model.ts, writes the ranked board
@@ -9,7 +9,9 @@
 // The dashboard is a static page, no framework and no network: dashboard/index.html, dashboard/app.css
 // and dashboard/app.js read /output/data.js, which this program writes from the same board. The
 // board covers the whole pre-token universe (342 protocols, watchlist included), states the model
-// on the page, and gives every protocol a farm plan.
+// on the page, gives every protocol a farm plan with its total cost, and shows the implied value
+// per dollar of that cost, so a reader can compare a cheap farm on an L2 with a dear one on
+// Ethereum mainnet on the same footing.
 //
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
@@ -90,5 +92,6 @@ writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEX
 
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored\n` +
+    `token radar: model ${radar.model_version}, total implied $${radar.total_implied_usd.toLocaleString('en-US')}, rank 1 ${board[0]?.slug} $${(board[0]?.implied_value_usd ?? 0).toLocaleString('en-US')}\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );
