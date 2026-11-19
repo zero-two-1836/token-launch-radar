@@ -1,4 +1,4 @@
-// The token radar's model, version radar-3: one snapshot of the protocol universe in, one ranked
+// The token radar's model, version radar-4: one snapshot of the protocol universe in, one ranked
 // board out. Every pre-token protocol in the snapshot is scored — all 342 of them, not just the
 // 40 on the watchlist — so the board is the whole pre-token universe, ranked by what a launch
 // would be worth.
@@ -19,22 +19,31 @@
 //   growth        = clamp(change_7d, -50, +100) per cent
 //   growthMult    = 1 + (growth / 100) x 0.5
 //   maturity      = 0.6 + min(age_days, 1095) / 1095 x 0.4   (age unknown: 365 days)
+//   chains        = 1 + min(chains_live - 1, 10) x 0.01, so a protocol live on many chains
+//                     is worth up to 10% more than a single-chain one: more chains means more
+//                     users to reward, and the count is the snapshot's own field, the last one
+//                     the model had not used yet. A protocol on one chain scores x1.00.
+//   momentum      = 1 + clamp(category TVL-weighted 7-day change, -20, +50) / 100 x 0.25,
+//                     so a protocol in a category whose money is growing fast is worth up to
+//                     12.5% more, and one in a shrinking category up to 5% less. The sector's
+//                     heat is the snapshot's own seven-day figures, aggregated by category.
 //   likelihood    = 1.0, except a protocol whose category makes a launch structural nonsense
 //                     (an exchange, a bridge, a wrapped or staked product of a token that
 //                     already trades): 0.01; a staking pool: 0.10; a versioned name (a pool of
 //                     another protocol): half again. The category, not the name, decides.
-//   implied       = max(1, round(tvl_usd x peer multiple x growthMult x maturity x likelihood))
+//   implied       = max(1, round(tvl_usd x peer multiple x growthMult x maturity x chains
+//                     x momentum x likelihood))
 //
 // A launch is the token a protocol may issue one day. This model prices the token if it launched
 // with the protocol's record as it stands; it never predicts whether or when a token is issued.
 // "Records no token" is DefiLlama's record, never proof a protocol has none.
 //
-// radar-3 changes over radar-2: the peer multiple is winsorized at the market 90th percentile
-// and the shrinkage prior scales with peer count, so the board's top no longer rests on a single
-// outlier peer (radar-2's Risk Curators multiple came from one peer at 2.97x, and Prediction
-// Market's from one peer at 400x). Farm plans now price gas from the protocol's own first chain
-// (Ethereum mainnet costs real money, an L2 costs cents) and each plan names what to track week
-// to week, instead of the same flat gas figure for every chain.
+// radar-4 changes over radar-3: the model now uses every figure the snapshot carries. Chain
+// breadth (the chains array) adds up to 10% for protocols live on many chains, and category
+// momentum (the TVL-weighted seven-day change of the protocol's own category) adds up to 12.5%
+// in a hot sector and takes up to 5% in a cold one. Farm plans now carry a total cost: the
+// capital plus every dollar of gas over the hold period, and the implied value per dollar of
+// that total, so a reader can compare what a farm costs against what its launch would be worth.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -74,6 +83,11 @@ export interface ModelConstants {
   maturity_range: number;
   maturity_days: number;
   unknown_age_days: number;
+  chain_breadth_step: number;
+  chain_breadth_cap: number;
+  momentum_weight: number;
+  momentum_floor: number;
+  momentum_cap: number;
   structural_likelihood: number;
   staking_pool_likelihood: number;
 }
@@ -92,12 +106,17 @@ export const MODEL: ModelConstants = {
   maturity_range: 0.4,
   maturity_days: 1095,
   unknown_age_days: 365,
+  chain_breadth_step: 0.01,
+  chain_breadth_cap: 10,
+  momentum_weight: 0.25,
+  momentum_floor: -20,
+  momentum_cap: 50,
   structural_likelihood: 0.01,
   staking_pool_likelihood: 0.1,
 };
 
 /** The model's version label: the dashboard names it. */
-export const MODEL_VERSION = 'radar-3';
+export const MODEL_VERSION = 'radar-4';
 
 /** A farm step: the action, what it costs, and how long it takes. */
 export interface FarmStep {
@@ -128,9 +147,17 @@ export interface BoardRow {
     growth_pct: number;
     growth_multiplier: number;
     maturity_multiplier: number;
+    chain_multiplier: number;
+    chain_count: number;
+    momentum_multiplier: number;
+    category_growth_pct: number;
     likelihood: number;
     likelihood_reason: string;
     age_days: number | null;
+    farm_capital_usd: number;
+    farm_gas_total_usd: number;
+    farm_total_cost_usd: number;
+    farm_value_per_dollar: number;
   };
   farm_steps: string[];
 }
@@ -152,8 +179,16 @@ export interface RadarRow {
   peer_count: number;
   growth_multiplier: number;
   maturity_multiplier: number;
+  chain_multiplier: number;
+  chain_count: number;
+  momentum_multiplier: number;
+  category_growth_pct: number;
   likelihood: number;
   likelihood_reason: string;
+  farm_capital_usd: number;
+  farm_gas_total_usd: number;
+  farm_total_cost_usd: number;
+  farm_value_per_dollar: number;
   watchlist: boolean;
 }
 
@@ -175,6 +210,8 @@ export interface PeerRow {
   median: number | null;
   multiple: number;
   prior: number;
+  growth_pct: number;
+  protocols: number;
 }
 
 /** Everything the dashboard needs: the board, the live set, the peers and the model. */
@@ -268,17 +305,53 @@ export function peerTable(snapshot: Snapshot, model: ModelConstants = MODEL): { 
     byCategory.set(p.category ?? 'Uncategorized', list);
   }
   const categories = new Set(snapshot.protocols.map((p) => p.category ?? 'Uncategorized'));
+  const momentum = categoryMomentum(snapshot);
   const peers: PeerRow[] = [...categories].sort().map((category) => {
     const list = byCategory.get(category);
+    const growth = momentum.get(category) ?? 0;
+    const count = snapshot.protocols.filter((p) => (p.category ?? 'Uncategorized') === category).length;
     if (list === undefined || list.length === 0) {
-      return { category, peers: 0, median: null, multiple: round4(global), prior: priorFor(0, model) };
+      return { category, peers: 0, median: null, multiple: round4(global), prior: priorFor(0, model), growth_pct: round4(growth), protocols: count };
     }
     const med = median(list);
     const prior = priorFor(list.length, model);
     const multiple = Math.min(model.peer_cap, Math.max(model.peer_floor, (list.length * med + prior * global) / (list.length + prior)));
-    return { category, peers: list.length, median: round4(med), multiple: round4(multiple), prior };
+    return { category, peers: list.length, median: round4(med), multiple: round4(multiple), prior, growth_pct: round4(growth), protocols: count };
   });
   return { peers, global: round4(global), winsorCap: round4(winsorCap) };
+}
+
+/**
+ * Each category's seven-day momentum: the TVL-weighted mean of its protocols' seven-day
+ * TVL change, from the snapshot alone. A category whose money is growing fast is a hot
+ * sector; one whose money is leaving is cold. Protocols with no reported change are left
+ * out of their category's average instead of counted as flat.
+ */
+export function categoryMomentum(snapshot: Snapshot): Map<string, number> {
+  const out = new Map<string, number>();
+  const byCategory = new Map<string, { tvl: number; weighted: number }>();
+  for (const p of snapshot.protocols) {
+    if (p.change_7d === null || !Number.isFinite(p.change_7d)) continue;
+    const key = p.category ?? 'Uncategorized';
+    const cur = byCategory.get(key) ?? { tvl: 0, weighted: 0 };
+    cur.tvl += p.tvl_usd;
+    cur.weighted += p.tvl_usd * p.change_7d;
+    byCategory.set(key, cur);
+  }
+  for (const [key, v] of byCategory) out.set(key, v.tvl > 0 ? v.weighted / v.tvl : 0);
+  return out;
+}
+
+/** A protocol's chain-breadth multiplier: more live chains, more users to reward, up to +10%. */
+export function chainMultiplier(chainCount: number, model: ModelConstants = MODEL): number {
+  const extra = Math.min(Math.max(chainCount - 1, 0), model.chain_breadth_cap);
+  return round4(1 + extra * model.chain_breadth_step);
+}
+
+/** A category's momentum multiplier: a hot sector lifts its protocols, a cold one trims them. */
+export function momentumMultiplier(categoryGrowthPct: number, model: ModelConstants = MODEL): number {
+  const clamped = Math.min(model.momentum_cap, Math.max(model.momentum_floor, categoryGrowthPct));
+  return round4(1 + (clamped / 100) * model.momentum_weight);
 }
 
 /** A protocol's launch likelihood and the reason, from its category and name shape only. */
@@ -306,8 +379,9 @@ export function impliedValue(
   asOf: string,
   peerByCategory: Map<string, PeerRow>,
   globalMultiple: number,
+  momentumByCategory: Map<string, number>,
   model: ModelConstants = MODEL,
-): { implied: number; multiple: number; peerCount: number; growthPct: number; growthMult: number; maturityMult: number; likelihood: number; reason: string; age: number | null } {
+): { implied: number; multiple: number; peerCount: number; growthPct: number; growthMult: number; maturityMult: number; chainMult: number; chainCount: number; momentumMult: number; categoryGrowth: number; likelihood: number; reason: string; age: number | null } {
   const age = ageDays(asOf, protocol.listed_at);
   const rawGrowth = finite(protocol.change_7d, 0);
   const growthPct = Math.min(model.growth_cap, Math.max(model.growth_floor, rawGrowth));
@@ -318,9 +392,13 @@ export function impliedValue(
   const peer = peerByCategory.get(category);
   const multiple = peer !== undefined ? peer.multiple : globalMultiple;
   const peerCount = peer !== undefined ? peer.peers : 0;
+  const chainCount = protocol.chains.length;
+  const chainMult = chainMultiplier(chainCount, model);
+  const categoryGrowth = momentumByCategory.get(category) ?? 0;
+  const momentumMult = momentumMultiplier(categoryGrowth, model);
   const { likelihood, reason } = likelihoodOf(protocol, model);
-  const implied = Math.max(1, Math.round(protocol.tvl_usd * multiple * growthMult * maturityMult * likelihood));
-  return { implied, multiple, peerCount, growthPct, growthMult, maturityMult, likelihood, reason, age };
+  const implied = Math.max(1, Math.round(protocol.tvl_usd * multiple * growthMult * maturityMult * chainMult * momentumMult * likelihood));
+  return { implied, multiple, peerCount, growthPct, growthMult, maturityMult, chainMult, chainCount, momentumMult, categoryGrowth, likelihood, reason, age };
 }
 
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
@@ -329,40 +407,52 @@ const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; peers: PeerRow[]; globalMultiple: number; winsorCap: number } {
   const { peers, global, winsorCap } = peerTable(snapshot, model);
   const peerByCategory = new Map(peers.map((p) => [p.category, p]));
+  const momentumByCategory = categoryMomentum(snapshot);
   // The board is the whole pre-token universe: every protocol that records no token.
   const chosen = snapshot.protocols.filter(isPreToken);
   const scored = chosen.map((p) => {
-    const v = impliedValue(p, snapshot.as_of, peerByCategory, global, model);
+    const v = impliedValue(p, snapshot.as_of, peerByCategory, global, momentumByCategory, model);
     return { p, ...v };
   });
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
-  const board: BoardRow[] = scored.map((s, i) => ({
-    rank: i + 1,
-    slug: s.p.slug,
-    name: s.p.name,
-    category: s.p.category,
-    chains: s.p.chains,
-    tvl_usd: s.p.tvl_usd,
-    change_7d: s.p.change_7d,
-    mcap_usd: s.p.mcap_usd,
-    listed_at: s.p.listed_at,
-    gecko_id: s.p.gecko_id,
-    symbol: s.p.symbol,
-    token_status: 'pre-token',
-    age_days: s.age,
-    implied_value_usd: s.implied,
-    model: {
-      peer_multiple: s.multiple,
-      peer_count: s.peerCount,
-      growth_pct: s.growthPct,
-      growth_multiplier: round4(s.growthMult),
-      maturity_multiplier: round4(s.maturityMult),
-      likelihood: s.likelihood,
-      likelihood_reason: s.reason,
+  const board: BoardRow[] = scored.map((s, i) => {
+    const cost = farmCostFor(s.p, s.age, s.implied);
+    return {
+      rank: i + 1,
+      slug: s.p.slug,
+      name: s.p.name,
+      category: s.p.category,
+      chains: s.p.chains,
+      tvl_usd: s.p.tvl_usd,
+      change_7d: s.p.change_7d,
+      mcap_usd: s.p.mcap_usd,
+      listed_at: s.p.listed_at,
+      gecko_id: s.p.gecko_id,
+      symbol: s.p.symbol,
+      token_status: 'pre-token',
       age_days: s.age,
-    },
-    farm_steps: farmSteps(s.p, s.age).map(stepText),
-  }));
+      implied_value_usd: s.implied,
+      model: {
+        peer_multiple: s.multiple,
+        peer_count: s.peerCount,
+        growth_pct: s.growthPct,
+        growth_multiplier: round4(s.growthMult),
+        maturity_multiplier: round4(s.maturityMult),
+        chain_multiplier: s.chainMult,
+        chain_count: s.chainCount,
+        momentum_multiplier: s.momentumMult,
+        category_growth_pct: round4(s.categoryGrowth),
+        likelihood: s.likelihood,
+        likelihood_reason: s.reason,
+        age_days: s.age,
+        farm_capital_usd: cost.capital,
+        farm_gas_total_usd: cost.gasTotal,
+        farm_total_cost_usd: cost.total,
+        farm_value_per_dollar: cost.valuePerDollar,
+      },
+      farm_steps: farmSteps(s.p, s.age).map(stepText),
+    };
+  });
   return { board, peers, globalMultiple: global, winsorCap };
 }
 
@@ -450,6 +540,31 @@ function gasFor(chain: string): { tx: string; week: string } {
   if (L2_CHAINS.has(chain)) return { tx: 'about $0.50', week: 'about $1 of gas a week' };
   if (CHEAP_CHAINS.has(chain)) return { tx: 'under $0.10', week: 'under $0.50 of gas a week' };
   return { tx: 'about $2', week: 'about $2 of gas a week' };
+}
+
+/** The same gas prices as numbers, so a farm plan can total its cost in dollars. */
+export function gasCostFor(chain: string): { txUsd: number; weekUsd: number } {
+  if (chain === 'Ethereum') return { txUsd: 8, weekUsd: 10 };
+  if (L2_CHAINS.has(chain)) return { txUsd: 0.5, weekUsd: 1 };
+  if (CHEAP_CHAINS.has(chain)) return { txUsd: 0.1, weekUsd: 0.5 };
+  return { txUsd: 2, weekUsd: 2 };
+}
+
+/**
+ * What farming one protocol costs in full: the capital plus every dollar of gas over the
+ * hold period (the first transaction, then one week of activity for each week held). The
+ * value per dollar divides the implied launch value by that total, so a reader can compare
+ * a cheap farm on an L2 with a dear one on Ethereum mainnet on the same footing.
+ */
+export function farmCostFor(p: SnapshotProtocol, age: number | null, impliedUsd: number): { capital: number; gasTotal: number; total: number; weeks: number; valuePerDollar: number } {
+  const capital = capitalFor(p);
+  const hold = holdDaysFor(age);
+  const weeks = Math.max(1, Math.ceil(hold / 7));
+  const gas = gasCostFor(chainOf(p));
+  const gasTotal = Math.round((gas.txUsd + gas.weekUsd * weeks) * 100) / 100;
+  const total = Math.round((capital + gasTotal) * 100) / 100;
+  const valuePerDollar = total > 0 ? Math.round((impliedUsd / total) * 100) / 100 : 0;
+  return { capital, gasTotal, total, weeks, valuePerDollar };
 }
 
 /** What to watch week to week, so the activity follows the protocol instead of a script. */
@@ -554,8 +669,16 @@ export function radarRow(row: BoardRow, watchlist: Set<string>): RadarRow {
     peer_count: row.model.peer_count,
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
+    chain_multiplier: row.model.chain_multiplier,
+    chain_count: row.model.chain_count,
+    momentum_multiplier: row.model.momentum_multiplier,
+    category_growth_pct: row.model.category_growth_pct,
     likelihood: row.model.likelihood,
     likelihood_reason: row.model.likelihood_reason,
+    farm_capital_usd: row.model.farm_capital_usd,
+    farm_gas_total_usd: row.model.farm_gas_total_usd,
+    farm_total_cost_usd: row.model.farm_total_cost_usd,
+    farm_value_per_dollar: row.model.farm_value_per_dollar,
     watchlist: watchlist.has(row.slug),
   };
 }
