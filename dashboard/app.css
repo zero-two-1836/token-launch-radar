@@ -67,6 +67,9 @@ table.board { width: 100%; border-collapse: collapse; font-size: 14px; }
 .board tbody tr { cursor: pointer; }
 .board tbody tr:hover { background: var(--panel2); }
 .board td.num, .board th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.board td .sub2 { display: block; color: var(--faint); font-size: 12px; font-weight: 400; }
+.board td .bar { display: block; height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--accent), var(--accent2)); margin-top: 4px; }
+.board tbody tr.top td:first-child { color: var(--accent2); font-weight: 700; font-size: 16px; }
 .board td.name { white-space: normal; font-weight: 600; }
 .board td.name small { display: block; font-weight: 400; color: var(--faint); font-size: 12px; }
 .badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
@@ -81,19 +84,19 @@ table.board { width: 100%; border-collapse: collapse; font-size: 14px; }
 .peergrid div { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
 .peergrid b { display: block; font-size: 14px; }
 .peergrid span { color: var(--muted); font-size: 12px; }
-.overlay { position: fixed; inset: 0; background: rgba(4, 7, 12, 0.78); display: flex; align-items: flex-start; justify-content: center; padding: 24px 16px; z-index: 50; overflow-y: auto; }
-.detail { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; max-width: 760px; width: 100%; padding: 20px 26px; }
-.detail h2 { font-size: 24px; margin: 4px 0 2px; }
-.detail .sub { color: var(--muted); margin: 0 0 12px; }
-.detail dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px 16px; margin: 0 0 12px; }
+.overlay { position: fixed; inset: 0; background: rgba(4, 7, 12, 0.78); display: flex; align-items: flex-start; justify-content: center; padding: 12px 16px; z-index: 50; overflow-y: auto; }
+.detail { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; max-width: 760px; width: 100%; padding: 14px 24px 10px; font-size: 14px; }
+.detail h2 { font-size: 22px; margin: 4px 0 2px; }
+.detail .sub { color: var(--muted); margin: 0 0 8px; }
+.detail dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px 16px; margin: 0 0 8px; }
 .detail dt { color: var(--faint); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
 .detail dd { margin: 2px 0 0; font-weight: 600; font-variant-numeric: tabular-nums; }
-.detail h3 { font-size: 16px; margin: 14px 0 6px; }
-.detail table.model { width: 100%; border-collapse: collapse; font-size: 14px; margin: 4px 0 2px; }
-.detail table.model td { padding: 5px 8px; border-bottom: 1px solid var(--line); }
+.detail h3 { font-size: 15px; margin: 10px 0 5px; }
+.detail table.model { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 4px 0 2px; }
+.detail table.model td { padding: 4px 8px; border-bottom: 1px solid var(--line); }
 .detail table.model td:last-child { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 .detail ol.steps { margin: 6px 0; padding-left: 22px; }
-.detail ol.steps li { margin: 7px 0; }
+.detail ol.steps li { margin: 4px 0; }
 .detail ol.steps li b { display: block; }
 .detail ol.steps li span { color: var(--muted); font-size: 13px; }
 .close { float: right; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 14px; }

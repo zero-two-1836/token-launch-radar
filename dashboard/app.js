@@ -43,12 +43,6 @@
 
   /* ---------- farm plan: the same rules as lib/model.ts, so the page shows the board's plan ---------- */
   function chainOf(p) { return p.chains && p.chains.length > 0 ? p.chains[0] : 'its main chain'; }
-  function capitalFor(p) {
-    if (p.tvl_usd >= 5e9) return 250;
-    if (p.tvl_usd >= 1e9) return 150;
-    if (p.tvl_usd >= 1e8) return 100;
-    return 50;
-  }
   function holdDaysFor(age) {
     if (age === null || age === undefined) return 30;
     if (age < 180) return 60;
@@ -116,16 +110,21 @@
   }
   function farmSteps(p) {
     var chain = chainOf(p);
-    var capital = capitalFor(p);
+    var capital = p.farm_capital_usd;
+    var gasTotal = p.farm_gas_total_usd;
+    var total = p.farm_total_cost_usd;
     var hold = holdDaysFor(p.age_days);
+    var weeks = Math.max(1, Math.ceil(hold / 7));
     var gas = gasFor(chain);
+    var active = 50 + 10 * weeks;
     return [
-      { text: 'Use a fresh wallet that holds only the funds you plan to farm with ' + p.name + ' on ' + chain + ', and keep its seed phrase offline.', cost: gas.tx + ' of gas for the first transaction', time: '5 minutes' },
+      { text: 'Fund a fresh wallet with $' + total + ' before you start — $' + capital + ' for the position and $' + gasTotal + ' of gas money on ' + chain + ' — keep its seed phrase offline, and use this wallet for ' + p.name + ' and nothing else.', cost: 'the $' + total + ' moved in, and it stays yours', time: '5 minutes' },
       { text: actionFor(p, capital, chain), cost: '$' + capital + ' of capital and ' + gas.tx + ' of gas', time: '15 minutes to set up' },
-      { text: weeklyFor(p) + ' ' + trackFor(p), cost: gas.week, time: '10 minutes a week' },
+      { text: weeklyFor(p) + ' ' + trackFor(p) + ' Across the ' + weeks + ' weeks of the hold, the gas for the whole plan, the first transaction included, comes to about $' + gasTotal + ' in total.', cost: gas.week, time: '10 minutes a week' },
       { text: 'Hold the position for at least ' + hold + ' days so the activity is counted in more than one snapshot.', cost: 'the $' + capital + ' stays in the position', time: hold + ' days' },
       { text: "Before you withdraw, open " + p.name + "'s own points or rewards page and claim only from the link it publishes.", cost: 'no fee to check, and never pay to claim', time: '10 minutes' },
-      { text: 'Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.', cost: 'nothing but the log', time: '5 minutes' }
+      { text: 'Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.', cost: 'nothing but the log', time: '5 minutes' },
+      { text: 'Close the farm on day ' + hold + ': the whole plan cost $' + total + ' — $' + capital + ' of capital, which comes back when you withdraw, plus $' + gasTotal + ' of gas, which is spent — and about ' + active + ' minutes of your time. If ' + p.name + ' has announced no points program by then, withdraw in full and move the capital to the next farm down this board.', cost: gas.tx + ' of gas to withdraw', time: '15 minutes' }
     ].map(stepText);
   }
 
@@ -185,6 +184,7 @@
     list.sort(function (a, b) {
       var d = 0;
       if (key === 'implied') d = a.implied_value_usd - b.implied_value_usd;
+      else if (key === 'per') d = a.farm_value_per_dollar - b.farm_value_per_dollar;
       else if (key === 'tvl') d = a.tvl_usd - b.tvl_usd;
       else if (key === 'change') d = (a.change_7d || 0) - (b.change_7d || 0);
       else if (key === 'age') d = (a.age_days || 0) - (b.age_days || 0);
@@ -213,6 +213,11 @@
       }
     })]);
   }
+  function barPct(r) {
+    var max = DATA.rows.length ? DATA.rows[0].implied_value_usd : 1;
+    if (r.implied_value_usd <= 1 || max <= 1) return 2;
+    return Math.max(2, Math.round(100 * Math.log(r.implied_value_usd) / Math.log(max)));
+  }
   function boardTable(list) {
     var head = el('tr', null, [
       el('th', { text: '#' }),
@@ -222,6 +227,7 @@
       sortHeader('tvl', 'TVL'),
       sortHeader('change', '7d'),
       sortHeader('implied', 'Implied value'),
+      sortHeader('per', 'Per $1 farmed'),
       el('th', { text: 'Launch' })
     ]);
     var body = el('tbody');
@@ -235,16 +241,24 @@
       if (r.watchlist) nameCell.appendChild(el('span', { class: 'badge watch', text: 'Watchlist' }));
       body.appendChild(el('tr', {
         tabindex: '0',
+        class: r.rank <= 3 ? 'top' : null,
         onclick: function () { state.detail = r.slug; writeHash(state); render(); },
         onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); state.detail = r.slug; writeHash(state); render(); } }
       }, [
         el('td', { text: String(r.rank) }),
         nameCell,
         el('td', { text: r.category || '—' }),
-        el('td', { text: r.chains.slice(0, 3).join(', ') || '—' }),
+        el('td', { text: (r.chains.length > 2 ? r.chains.slice(0, 2).join(', ') + ' +' + (r.chains.length - 2) : r.chains.join(', ')) || '—' }),
         el('td', { class: 'num', text: fmtUsd(r.tvl_usd) }),
         chg,
-        el('td', { class: 'num', text: fmtUsd(r.implied_value_usd) }),
+        el('td', { class: 'num' }, [
+          el('span', { text: fmtUsd(r.implied_value_usd) }),
+          el('span', { class: 'bar', style: 'width:' + barPct(r) + '%' })
+        ]),
+        el('td', { class: 'num' }, [
+          el('span', { text: fmtUsd(r.farm_value_per_dollar) }),
+          el('span', { class: 'sub2', text: 'all-in $' + r.farm_total_cost_usd })
+        ]),
         el('td', null, [likelihoodBadge(r)])
       ]));
     });
@@ -265,7 +279,7 @@
       ['7-day growth', fmtPct(m.change_7d) + ' → ×' + m.growth_multiplier.toFixed(3)],
       ['Maturity (' + fmtAge(m.age_days) + ' tracked, no token)', '×' + m.maturity_multiplier.toFixed(3)],
       ['Chain breadth (' + m.chain_count + ' live chain' + (m.chain_count === 1 ? '' : 's') + ')', '×' + m.chain_multiplier.toFixed(3)],
-      ['Category momentum (' + (m.category || 'this category') + ' ' + fmtPct(m.category_growth_pct) + ' TVL-weighted 7d)', '×' + m.momentum_multiplier.toFixed(3)],
+      ['Sector momentum (the rest of ' + (m.category || 'this category') + ' ' + fmtPct(m.category_growth_pct) + ' TVL-weighted 7d, its own week left out)', '×' + m.momentum_multiplier.toFixed(3)],
       ['Launch likelihood', Math.round(m.likelihood * 100) + '%'],
       ['Implied value', fmtUsd(m.implied_value_usd)]
     ];
@@ -296,10 +310,11 @@
       ]),
       el('h3', { text: 'How the value is built' }),
       el('table', { class: 'model' }, modelRows),
-      el('p', { class: 'note', text: 'Implied value = TVL × peer multiple × growth × maturity × chain breadth × category momentum × launch likelihood. Multipliers are shown rounded; the board carries the program’s exact product. ' + r.likelihood_reason }),
+      el('p', { class: 'note', text: 'Implied value = TVL × peer multiple × growth × maturity × chain breadth × sector momentum × launch likelihood. Multipliers are shown rounded; the board carries the program’s exact product. ' + r.likelihood_reason }),
+      el('p', { class: 'note', text: 'Sensitivity: at the market-wide median multiple (×' + DATA.global_multiple.toFixed(3) + ') instead of its category’s, the same record would imply ' + fmtUsd(m.implied_value_usd * DATA.global_multiple / m.peer_multiple) + ' — the gap is what the category’s own trading history adds or takes away.' }),
       el('h3', { text: 'What the farm costs' }),
       el('table', { class: 'model' }, costRows),
-      el('p', { class: 'note', text: 'Total cost is the capital plus every dollar of gas over the hold period, priced from this protocol’s own first chain. Implied value per $1 farmed compares farms with each other — a cheap farm on an L2 against a dear one on Ethereum — it is not a payout: the launch value is shared across every farmer.' }),
+      el('p', { class: 'note', text: 'Total cost is the capital plus every dollar of gas over the hold period, priced from this protocol’s own first chain. Implied value per $1 farmed compares farms with each other; it is not a payout — the launch value is shared across every farmer.' }),
       el('h3', { text: 'How to farm it' }),
       el('ol', { class: 'steps' }, steps.map(function (s) {
         var cut = s.indexOf(' Cost: ');
@@ -331,6 +346,11 @@
       el('table', { class: 'board' }, [el('thead', null, [head]), body])
     ]);
   }
+  function workedExample() {
+    var r = DATA.rows[0];
+    if (!r) return '';
+    return 'Worked example, from the board itself — ' + r.name + ', rank 1: TVL ' + fmtUsd(r.tvl_usd) + ' × peer multiple ×' + r.peer_multiple.toFixed(3) + ' (' + r.peer_count + ' tokenized peer' + (r.peer_count === 1 ? '' : 's') + ' in ' + (r.category || 'its category') + ') × growth ×' + r.growth_multiplier.toFixed(3) + ' × maturity ×' + r.maturity_multiplier.toFixed(3) + ' × chain breadth ×' + r.chain_multiplier.toFixed(3) + ' (' + r.chain_count + ' chain' + (r.chain_count === 1 ? '' : 's') + ') × sector momentum ×' + r.momentum_multiplier.toFixed(3) + ' × likelihood ' + Math.round(r.likelihood * 100) + '% = ' + fmtUsd(r.implied_value_usd) + ' implied. Every other row is the same arithmetic on its own figures.';
+  }
   function methodSection() {
     var peers = DATA.peers.filter(function (p) { return p.peers > 0; }).sort(function (a, b) { return b.peers - a.peers; });
     var grid = el('div', { class: 'peergrid' }, peers.map(function (p) {
@@ -344,21 +364,22 @@
         el('h2', { text: 'The model: peer multiples, not a name list' }),
         el('p', null, [el('b', { text: 'Implied value = TVL × peer multiple × growth × maturity × chain breadth × category momentum × launch likelihood.' }), el('span', { text: ' Every factor comes from the snapshot’s own figures. No protocol name is special-cased anywhere in the program: the same function scores all 342 pre-token protocols, and it uses every figure the snapshot carries.' })]),
         el('div', { class: 'formula', text: 'implied = round(TVL × peerMultiple × (1 + clamp(7d, −50, +100) / 100 × 0.5) × (0.6 + min(age, 1095) / 1095 × 0.4) × (1 + min(chains − 1, 10) × 0.01) × (1 + clamp(sector7d, −20, +50) / 100 × 0.25) × likelihood)' }),
+        el('p', { text: workedExample() }),
         el('h3', { text: 'Peer multiple' }),
         el('p', { text: 'For each category, the median market-cap / TVL of its tokenized protocols, shrunk toward the market-wide median (×' + DATA.global_multiple.toFixed(3) + ') with prior weight ' + MODEL.peer_prior_weight + ', capped at ×' + MODEL.peer_cap + ' and floored at ×' + MODEL.peer_floor + '. Two guards keep one odd peer from setting a whole category: every peer ratio is first capped at the market’s 90th percentile (×' + (DATA.peer_winsor_cap || 0).toFixed(3) + '), so a tiny-TVL token trading at 400× its TVL cannot set its category’s multiple; and the prior weight grows when a category has few peers — 30 for one peer, 20 for two, 10 for three or more — so a one-peer category leans almost entirely on the market. A category with none uses the market median outright.' }),
         grid,
         el('h3', { text: 'Chain breadth and sector momentum' }),
-        el('p', { text: 'Two factors use the snapshot’s remaining figures. Chain breadth: a protocol live on more chains reaches more users to reward, so each extra chain up to ten adds 1% — a protocol on eleven chains or more scores ×1.10, a single-chain one ×1.00. Sector momentum: each category’s TVL-weighted seven-day change, so a protocol in a sector whose money is growing fast is worth up to 12.5% more and one in a shrinking sector up to 5% less. Both are the snapshot’s own numbers, never a hand-kept list.' }),
+        el('p', { text: 'Two factors use the snapshot’s remaining figures. Chain breadth: a protocol live on more chains reaches more users to reward, so each extra chain up to ten adds 1% — a protocol on eleven chains or more scores ×1.10, a single-chain one ×1.00. Sector momentum: each category’s TVL-weighted seven-day change, measured leave-one-out — the protocol’s own week is taken out of its sector’s average before its factor is taken, so no protocol’s growth is counted twice, once on its own line and again in its sector’s. A protocol in a sector whose other money is growing fast is worth up to 12.5% more, and one in a shrinking sector up to 5% less. Both are the snapshot’s own numbers, never a hand-kept list.' }),
         el('h3', { text: 'Launch likelihood' }),
         el('p', { text: 'Core protocols price at 100%. An exchange, a bridge or a wrapped / staked product prices at 1%: its value is the underlying asset, not a new token. A staking pool prices at 10%. A versioned name — a pool of another protocol — halves the weight again. The category decides, never the name.' }),
         el('h3', { text: 'Growth and maturity' }),
         el('p', { text: 'Seven-day TVL growth moves the value by half its size, clamped to −50% … +100%. Age tracked with no token adds up to 40%: a protocol that has run for years without issuing anything is the one whose launch would be worth the most.' }),
         el('h3', { text: 'What a farm costs' }),
-        el('p', { text: 'Every protocol’s detail view totals its farm cost: the capital plus every dollar of gas over the hold period, priced from its own first chain — about $8 a transaction on Ethereum mainnet, about $0.50 on an L2, under $0.10 on the cheap chains — and divides the implied value by that total. The figure compares farms with each other; it is not a payout.' })
+        el('p', { text: 'Every protocol’s detail view totals its farm cost: the capital plus every dollar of gas over the hold period, priced from its own first chain — about $8 a transaction on Ethereum mainnet, about $0.50 on an L2, under $0.10 on the cheap chains. Every farm plan runs to seven steps and closes its own books: the first step funds the wallet with the plan’s exact total, and the last states the all-in cost — capital, gas and active minutes — with the day to review the farm and the condition for leaving it. The board’s Per $1 column divides the implied value by that total, so the comparison sits on the board itself, not only in the detail view. The figure compares farms with each other; it is not a payout.' })
       ]),
       el('div', { class: 'card' }, [
         el('h2', { text: 'How to read the board' }),
-        el('p', { text: 'Rank 1 is the most valuable launch on the snapshot’s figures. Click any row for its model breakdown, its total farm cost and its six-step farm plan, with what each step costs and how long it takes. Use the filters to narrow by category, chain or watchlist, and sort by implied value, TVL, growth or age.' }),
+        el('p', { text: 'Rank 1 is the most valuable launch on the snapshot’s figures. Click any row for its model breakdown, its total farm cost and its seven-step farm plan, with what each step costs and how long it takes. Use the filters to narrow by category, chain or watchlist, and sort by implied value, implied value per $1 farmed, TVL, growth or age.' }),
         el('p', { text: '“Records no token” is DefiLlama’s record, never proof a protocol has none. The implied value is this entry’s own claim, never make.fun’s, and a farm plan is a set of steps, not a promise of an airdrop.' })
       ])
     ]);
@@ -418,7 +439,7 @@
       wrap.appendChild(boardTable(list));
     }
     wrap.appendChild(el('footer', null, [
-      el('p', { text: 'Snapshot: ' + DATA.source + ' · as of ' + DATA.as_of + ' · watchlist floor ' + fmtUsd(DATA.floor_usd) + ' · model ' + DATA.model_version + ' (peer multiples, growth, maturity, launch likelihood).' }),
+      el('p', { text: 'Snapshot: ' + DATA.source + ' · as of ' + DATA.as_of + ' · watchlist floor ' + fmtUsd(DATA.floor_usd) + ' · model ' + DATA.model_version + ' (peer multiples, growth, maturity, chain breadth, leave-one-out sector momentum, launch likelihood).' }),
       el('p', { text: '“Records no token” is the snapshot’s record, never proof a protocol has none. Implied values are this entry’s own claims, and a farm plan is a set of steps, not a promise of an airdrop.' })
     ]));
     main.appendChild(wrap);
