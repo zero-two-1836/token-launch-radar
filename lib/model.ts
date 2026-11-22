@@ -1,4 +1,4 @@
-// The token radar's model, version radar-4: one snapshot of the protocol universe in, one ranked
+// The token radar's model, version radar-5: one snapshot of the protocol universe in, one ranked
 // board out. Every pre-token protocol in the snapshot is scored — all 342 of them, not just the
 // 40 on the watchlist — so the board is the whole pre-token universe, ranked by what a launch
 // would be worth.
@@ -7,8 +7,9 @@
 // names. The same function scores every protocol:
 //
 //   peer multiple = the median market-cap / TVL of the tokenized protocols in the same
-//                     category, shrunk toward the market-wide median and capped at 1.5,
-//                     floored at 0.02. Two guards keep one odd peer from setting a whole
+//                     category (the true median: the mean of the two middle ratios when a
+//                     category has an even count of peers), shrunk toward the market-wide
+//                     median and capped at 1.5, floored at 0.02. Two guards keep one odd peer from setting a whole
 //                     category: each peer's ratio is first capped at the market's 90th
 //                     percentile (a tiny-TVL token trading at 400x its TVL cannot set the
 //                     multiple for every protocol in its category), and the prior weight
@@ -26,7 +27,10 @@
 //   momentum      = 1 + clamp(category TVL-weighted 7-day change, -20, +50) / 100 x 0.25,
 //                     so a protocol in a category whose money is growing fast is worth up to
 //                     12.5% more, and one in a shrinking category up to 5% less. The sector's
-//                     heat is the snapshot's own seven-day figures, aggregated by category.
+//                     heat is the snapshot's own seven-day figures, aggregated by category —
+//                     and measured leave-one-out: the protocol's own week is removed from its
+//                     sector's average before the factor is taken, so a protocol's growth is
+//                     never counted twice, once on its own line and again in its sector's.
 //   likelihood    = 1.0, except a protocol whose category makes a launch structural nonsense
 //                     (an exchange, a bridge, a wrapped or staked product of a token that
 //                     already trades): 0.01; a staking pool: 0.10; a versioned name (a pool of
@@ -44,6 +48,15 @@
 // in a hot sector and takes up to 5% in a cold one. Farm plans now carry a total cost: the
 // capital plus every dollar of gas over the hold period, and the implied value per dollar of
 // that total, so a reader can compare what a farm costs against what its launch would be worth.
+//
+// radar-5 changes over radar-4: two honesty fixes to the model, and farm plans that close
+// their own books. Sector momentum is now leave-one-out — a protocol's own seven-day change
+// is removed from its category's TVL-weighted average before its momentum factor is taken,
+// so no protocol's week is ever counted twice — and the peer medians are true medians (the
+// mean of the two middle ratios on an even count) instead of the upper middle ratio. Farm
+// plans run to seven steps: the first funds the wallet with the plan's exact total, the
+// weekly step totals the gas across the whole hold, and a closing step states the all-in
+// cost — capital, gas and active minutes — with the day to review and exit.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -116,7 +129,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it. */
-export const MODEL_VERSION = 'radar-4';
+export const MODEL_VERSION = 'radar-5';
 
 /** A farm step: the action, what it costs, and how long it takes. */
 export interface FarmStep {
@@ -247,10 +260,11 @@ function finite(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-/** The median of a non-empty list of numbers. */
+/** The true median of a non-empty list of numbers: the middle value, or the mean of the two middle ones. */
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)]!;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
 }
 
 /** A whole day count from `from` to `to`, clamped at zero; null when either date is absent or bad. */
@@ -321,15 +335,18 @@ export function peerTable(snapshot: Snapshot, model: ModelConstants = MODEL): { 
   return { peers, global: round4(global), winsorCap: round4(winsorCap) };
 }
 
+/** One category's momentum sums: the TVL and the TVL-weighted seven-day change of the protocols that report one. */
+export interface MomentumAgg {
+  tvl: number;
+  weighted: number;
+}
+
 /**
- * Each category's seven-day momentum: the TVL-weighted mean of its protocols' seven-day
- * TVL change, from the snapshot alone. A category whose money is growing fast is a hot
- * sector; one whose money is leaving is cold. Protocols with no reported change are left
- * out of their category's average instead of counted as flat.
+ * Each category's momentum sums, from the snapshot alone. Protocols with no reported
+ * seven-day change are left out of their category's sums instead of counted as flat.
  */
-export function categoryMomentum(snapshot: Snapshot): Map<string, number> {
-  const out = new Map<string, number>();
-  const byCategory = new Map<string, { tvl: number; weighted: number }>();
+export function categoryMomentumAgg(snapshot: Snapshot): Map<string, MomentumAgg> {
+  const byCategory = new Map<string, MomentumAgg>();
   for (const p of snapshot.protocols) {
     if (p.change_7d === null || !Number.isFinite(p.change_7d)) continue;
     const key = p.category ?? 'Uncategorized';
@@ -338,8 +355,34 @@ export function categoryMomentum(snapshot: Snapshot): Map<string, number> {
     cur.weighted += p.tvl_usd * p.change_7d;
     byCategory.set(key, cur);
   }
-  for (const [key, v] of byCategory) out.set(key, v.tvl > 0 ? v.weighted / v.tvl : 0);
+  return byCategory;
+}
+
+/**
+ * Each category's seven-day momentum: the TVL-weighted mean of its protocols' seven-day
+ * TVL change. A category whose money is growing fast is a hot sector; one whose money is
+ * leaving is cold. This whole-category figure is the one the dashboard's peer table shows.
+ */
+export function categoryMomentum(snapshot: Snapshot): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const [key, v] of categoryMomentumAgg(snapshot)) out.set(key, v.tvl > 0 ? v.weighted / v.tvl : 0);
   return out;
+}
+
+/**
+ * One protocol's momentum figure: its category's TVL-weighted seven-day change with the
+ * protocol's own week taken out, so its growth is never counted twice — once in its own
+ * growth factor and again in its sector's. A protocol that reports no change contributed
+ * nothing to its category's sums, so the whole-category figure stands for it; a protocol
+ * that is its category's only reporter has no sector signal at all and scores a neutral 0.
+ */
+export function momentumFor(p: SnapshotProtocol, agg: Map<string, MomentumAgg>): number {
+  const a = agg.get(p.category ?? 'Uncategorized');
+  if (a === undefined) return 0;
+  if (p.change_7d === null || !Number.isFinite(p.change_7d)) return a.tvl > 0 ? a.weighted / a.tvl : 0;
+  const restTvl = a.tvl - p.tvl_usd;
+  if (restTvl <= 0) return 0;
+  return (a.weighted - p.tvl_usd * p.change_7d) / restTvl;
 }
 
 /** A protocol's chain-breadth multiplier: more live chains, more users to reward, up to +10%. */
@@ -379,7 +422,7 @@ export function impliedValue(
   asOf: string,
   peerByCategory: Map<string, PeerRow>,
   globalMultiple: number,
-  momentumByCategory: Map<string, number>,
+  momentumAgg: Map<string, MomentumAgg>,
   model: ModelConstants = MODEL,
 ): { implied: number; multiple: number; peerCount: number; growthPct: number; growthMult: number; maturityMult: number; chainMult: number; chainCount: number; momentumMult: number; categoryGrowth: number; likelihood: number; reason: string; age: number | null } {
   const age = ageDays(asOf, protocol.listed_at);
@@ -394,7 +437,7 @@ export function impliedValue(
   const peerCount = peer !== undefined ? peer.peers : 0;
   const chainCount = protocol.chains.length;
   const chainMult = chainMultiplier(chainCount, model);
-  const categoryGrowth = momentumByCategory.get(category) ?? 0;
+  const categoryGrowth = momentumFor(protocol, momentumAgg);
   const momentumMult = momentumMultiplier(categoryGrowth, model);
   const { likelihood, reason } = likelihoodOf(protocol, model);
   const implied = Math.max(1, Math.round(protocol.tvl_usd * multiple * growthMult * maturityMult * chainMult * momentumMult * likelihood));
@@ -407,11 +450,11 @@ const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; peers: PeerRow[]; globalMultiple: number; winsorCap: number } {
   const { peers, global, winsorCap } = peerTable(snapshot, model);
   const peerByCategory = new Map(peers.map((p) => [p.category, p]));
-  const momentumByCategory = categoryMomentum(snapshot);
+  const momentumAgg = categoryMomentumAgg(snapshot);
   // The board is the whole pre-token universe: every protocol that records no token.
   const chosen = snapshot.protocols.filter(isPreToken);
   const scored = chosen.map((p) => {
-    const v = impliedValue(p, snapshot.as_of, peerByCategory, global, momentumByCategory, model);
+    const v = impliedValue(p, snapshot.as_of, peerByCategory, global, momentumAgg, model);
     return { p, ...v };
   });
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
@@ -586,24 +629,30 @@ function trackFor(p: SnapshotProtocol): string {
 }
 
 /**
- * A protocol's farm plan: six steps, each an action with a cost and a time. The plan is derived
+ * A protocol's farm plan: seven steps, each an action with a cost and a time. The plan is derived
  * from the protocol's own record (category, chains, TVL, age), never from a hand-written list
  * of names. Gas is priced from the protocol's own first chain, and the weekly step names what
  * to track for that category, so two protocols on different chains and in different categories
- * do not get the same flat plan.
+ * do not get the same flat plan. The money comes from farmCostFor, the same figures the detail
+ * view's cost table shows, so the plan and the table cannot disagree: the first step funds the
+ * wallet with the plan's exact total, the weekly step totals the gas across the whole hold,
+ * and the closing step states the all-in cost — capital, gas and active minutes — with the day
+ * to review the farm and the condition for leaving it.
  */
 export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   const chain = chainOf(p);
-  const capital = capitalFor(p);
+  const cost = farmCostFor(p, age, 0);
+  const capital = cost.capital;
   const hold = holdDaysFor(age);
   const action = actionFor(p, capital, chain);
   const weekly = weeklyFor(p);
   const gas = gasFor(chain);
   const track = trackFor(p);
+  const activeMinutes = 50 + 10 * cost.weeks;
   return [
     {
-      text: `Use a fresh wallet that holds only the funds you plan to farm with ${p.name} on ${chain}, and keep its seed phrase offline.`,
-      cost: `${gas.tx} of gas for the first transaction`,
+      text: `Fund a fresh wallet with $${cost.total} before you start — $${capital} for the position and $${cost.gasTotal} of gas money on ${chain} — keep its seed phrase offline, and use this wallet for ${p.name} and nothing else.`,
+      cost: `the $${cost.total} moved in, and it stays yours`,
       time: '5 minutes',
     },
     {
@@ -612,7 +661,7 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
       time: '15 minutes to set up',
     },
     {
-      text: `${weekly} ${track}`,
+      text: `${weekly} ${track} Across the ${cost.weeks} weeks of the hold, the gas for the whole plan, the first transaction included, comes to about $${cost.gasTotal} in total.`,
       cost: gas.week,
       time: '10 minutes a week',
     },
@@ -630,6 +679,11 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
       text: `Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.`,
       cost: 'nothing but the log',
       time: '5 minutes',
+    },
+    {
+      text: `Close the farm on day ${hold}: the whole plan cost $${cost.total} — $${capital} of capital, which comes back when you withdraw, plus $${cost.gasTotal} of gas, which is spent — and about ${activeMinutes} minutes of your time. If ${p.name} has announced no points program by then, withdraw in full and move the capital to the next farm down this board.`,
+      cost: `${gas.tx} of gas to withdraw`,
+      time: '15 minutes',
     },
   ];
 }
