@@ -1,4 +1,4 @@
-// A working token-radar-01 entry (Node 22, standard library only), model radar-4.
+// A working token-radar-01 entry (Node 22, standard library only), model radar-5.
 //
 // The program reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), scores
 // every pre-token protocol with the peer-multiple model in lib/model.ts, writes the ranked board
@@ -9,9 +9,10 @@
 // The dashboard is a static page, no framework and no network: dashboard/index.html, dashboard/app.css
 // and dashboard/app.js read /output/data.js, which this program writes from the same board. The
 // board covers the whole pre-token universe (342 protocols, watchlist included), states the model
-// on the page, gives every protocol a farm plan with its total cost, and shows the implied value
-// per dollar of that cost, so a reader can compare a cheap farm on an L2 with a dear one on
-// Ethereum mainnet on the same footing.
+// on the page, gives every protocol a seven-step farm plan that opens with its exact funding
+// total and closes with its all-in cost, and shows the implied value per dollar of that cost —
+// on the board itself, not only in the detail view — so a reader can compare a cheap farm on
+// an L2 with a dear one on Ethereum mainnet on the same footing.
 //
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
